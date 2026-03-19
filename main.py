@@ -42,5 +42,3 @@ if __name__ == "__main__":
     engine = Engine()
     engine.show()
     sys.exit(app.exec())
-
-
