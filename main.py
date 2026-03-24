@@ -93,10 +93,12 @@ class Engine(QGraphicsView):
         self.player2.vy = 0
 
     def load_level(self, filepath):
-        # Rozmiar pojedynczego bloku (zostawiamy 50)
-        tile_size = 50
+        # 1. Zmiana rozmiaru kafelka z 50 na 25
+        tile_size = 25
 
-        # 1. Upewnij się, że lista jest pusta na początku wczytywania
+        # Obliczamy obniżenie cieczy proporcjonalnie (np. o 1/3 wysokości kafelka)
+        liquid_offset = int(tile_size / 3)  # dla 25 da to 8 pikseli obniżenia
+
         self.platforms = []
         self.liquids = []
 
@@ -116,24 +118,20 @@ class Engine(QGraphicsView):
                 if char == 'X':
                     platform = QGraphicsRectItem(0, 0, tile_size, tile_size)
                     platform.setPos(x_pos, y_pos)
-                    # Używamy gray, jak na twoim screenie (image_2.png)
                     platform.setBrush(QColor("gray"))
-                    # Wyłączamy pióro (pen), żeby nie psuło obrysu kolizji
                     platform.setPen(QPen(Qt.PenStyle.NoPen))
-
-                    # --- KLUCZOWA POPRAWKA: MUSISZ DODAĆ DO OBU ---
-                    self.platforms.append(platform)  # Logika (pętla fizyki)
-                    self.game_scene.addItem(platform)  # Wizualizacja (renderowanie)
-                    # ---------------------------------------------
+                    self.platforms.append(platform)
+                    self.game_scene.addItem(platform)
 
                 elif char == 'W':
-                    # Pamiętasz obniżenie? (y_pos + 20)
-                    water = Liquid(x_pos, y_pos + 20, tile_size, tile_size - 20, "woda")
-                    self.liquids.append(water)  # Logika (ciecze sprawdzamy w Engine)
-                    self.game_scene.addItem(water)  # Wizualizacja
+                    # Używamy dynamicznego przesunięcia
+                    water = Liquid(x_pos, y_pos + liquid_offset, tile_size, tile_size - liquid_offset, "woda")
+                    self.liquids.append(water)
+                    self.game_scene.addItem(water)
 
                 elif char == 'L':
-                    lawa = Liquid(x_pos, y_pos + 20, tile_size, tile_size - 20, "lawa")
+                    # Używamy dynamicznego przesunięcia
+                    lawa = Liquid(x_pos, y_pos + liquid_offset, tile_size, tile_size - liquid_offset, "lawa")
                     self.liquids.append(lawa)
                     self.game_scene.addItem(lawa)
 
@@ -146,24 +144,35 @@ class Engine(QGraphicsView):
 class Player(QGraphicsRectItem):
     def __init__(self, x, y, image_path, controls, element):
         super().__init__()
-        self.setRect(0, 0, 30, 50)
+
+        # Nowe, mniejsze wymiary postaci
+        player_width = 15
+        player_height = 25
+
+        # Ustawiamy nowy rozmiar hitboxa
+        self.setRect(0, 0, player_width, player_height)
         self.setPos(x, y)
         self.setPen(QPen(Qt.PenStyle.NoPen))
+
         self.sprite = QGraphicsPixmapItem(self)
         pixmap = QPixmap(image_path)
+
+        # Skalujemy grafikę do nowych wymiarów
         scaled_pixmap = pixmap.scaled(
-            30, 50,
+            player_width, player_height,
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
+        self.sprite.setPixmap(scaled_pixmap)
 
         self.element = element
-        self.sprite.setPixmap(scaled_pixmap)
+
+        # Fizyka (przeczytaj notatkę poniżej!)
         self.vx = 0
         self.vy = 0
-        self.gravity = 0.7
-        self.jump_speed = -13
-        self.move_speed = 3.5
+        self.gravity = 0.2
+        self.jump_speed = -4.5
+        self.move_speed = 2.4
         self.on_ground = False
         self.controls = controls
 
