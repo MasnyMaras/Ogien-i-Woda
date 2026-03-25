@@ -7,16 +7,19 @@ from PyQt6.QtGui import QColor, QPixmap, QPen, QBrush
 from PyQt6.QtWidgets import QGraphicsPixmapItem
 
 class Engine(QGraphicsView):
-    def __init__(self):
+    def __init__(self, level_file="level1.txt", main_menu=None):
         super().__init__()
+        self.main_menu = main_menu
 
         # Scene settings
         self.game_scene = QGraphicsScene(0, 0, 800, 600)
         self.setScene(self.game_scene)
 
         bg_pixmap = QPixmap("background.jpg")
-        bg_scaled = bg_pixmap.scaled(800, 600, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        bg_scaled = bg_pixmap.scaled(800, 600, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
         self.game_scene.setBackgroundBrush(QBrush(bg_scaled))
+
         # Window settings
         self.setFixedSize(800, 600)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -24,9 +27,16 @@ class Engine(QGraphicsView):
 
         self.platforms = []
         self.liquids = []
-        self.start_p1 = (50, 50)  # Zostaną nadpisane, ale muszą tu być
+        self.start_p1 = (50, 50)
         self.start_p2 = (100, 50)
-        self.load_level("level1.txt")
+
+        # Nowe zmienne dla checkpointów
+        self.current_respawn_p1 = self.start_p1
+        self.current_respawn_p2 = self.start_p2
+        self.checkpoints = []
+
+        # JEDYNE WYWOŁANIE LOAD LEVEL
+        self.load_level(level_file)
 
         self.player1 = Player(self.start_p1[0], self.start_p1[1], "fire.png", {
             'up': Qt.Key.Key_W, 'left': Qt.Key.Key_A, 'right': Qt.Key.Key_D
@@ -48,9 +58,45 @@ class Engine(QGraphicsView):
     def game_loop(self):
         self.player1.update_physics(self.keys, self.platforms)
         self.player2.update_physics(self.keys, self.platforms)
+
+        for box in self.boxes:
+            box.update_physics(self.platforms)
+
         self.check_liquid_collisions()
+        self.process_events()  # <--- TO OŻYWI DRZWI
+        self.check_checkpoints()
+
+    def process_events(self):
+        any_button_pressed = False
+        p1_rect = self.player1.sceneBoundingRect()
+        p2_rect = self.player2.sceneBoundingRect()
+
+        for btn in self.buttons:
+            btn_rect = btn.sceneBoundingRect()
+
+            # 1. Sprawdzamy graczy
+            if p1_rect.intersects(btn_rect) or p2_rect.intersects(btn_rect):
+                any_button_pressed = True
+                break
+
+            # 2. Sprawdzamy skrzynki
+            for box in self.boxes:
+                if box.sceneBoundingRect().intersects(btn_rect):
+                    any_button_pressed = True
+                    break
+
+            if any_button_pressed:
+                break
+
+        for door in self.doors:
+            if any_button_pressed:
+                door.open_door()
+            else:
+                door.close_door()
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
         self.keys[event.key()] = True
 
     def keyReleaseEvent(self, event):
@@ -82,25 +128,24 @@ class Engine(QGraphicsView):
             self.reset_level()
 
     def reset_level(self):
-        # Proste przeniesienie na pozycje startowe
-        self.player1.setPos(self.start_p1[0], self.start_p1[1])
-        # Należy też wyzerować prędkości, żeby nie spadały po respie
+        self.player1.setPos(self.current_respawn_p1[0], self.current_respawn_p1[1])
         self.player1.vx = 0
         self.player1.vy = 0
 
-        self.player2.setPos(self.start_p2[0], self.start_p2[1])
+        self.player2.setPos(self.current_respawn_p2[0], self.current_respawn_p2[1])
         self.player2.vx = 0
         self.player2.vy = 0
 
     def load_level(self, filepath):
-        # 1. Zmiana rozmiaru kafelka z 50 na 25
-        tile_size = 25
-
-        # Obliczamy obniżenie cieczy proporcjonalnie (np. o 1/3 wysokości kafelka)
-        liquid_offset = int(tile_size / 3)  # dla 25 da to 8 pikseli obniżenia
+        # Nowy, mniejszy rozmiar kafelka
+        tile_size = 20
 
         self.platforms = []
         self.liquids = []
+        self.doors = []
+        self.buttons = []
+        self.boxes = []
+        self.checkpoints = []
 
         try:
             with open(filepath, 'r') as file:
@@ -116,6 +161,7 @@ class Engine(QGraphicsView):
                 y_pos = row_idx * tile_size
 
                 if char == 'X':
+                    # Pełny blok (ściany, gruba podłoga)
                     platform = QGraphicsRectItem(0, 0, tile_size, tile_size)
                     platform.setPos(x_pos, y_pos)
                     platform.setBrush(QColor("gray"))
@@ -123,16 +169,58 @@ class Engine(QGraphicsView):
                     self.platforms.append(platform)
                     self.game_scene.addItem(platform)
 
+                elif char == '-':
+                    # CIENKA PLATFORMA (połowa wysokości, wyrównana do góry)
+                    # Idealna do robienia pomostów nad lawą
+                    platform = QGraphicsRectItem(0, 0, tile_size, int(tile_size / 2))
+                    platform.setPos(x_pos, y_pos)
+                    platform.setBrush(QColor("darkgray"))  # Inny kolor dla rozróżnienia
+                    platform.setPen(QPen(Qt.PenStyle.NoPen))
+                    self.platforms.append(platform)
+                    self.game_scene.addItem(platform)
+
+
                 elif char == 'W':
-                    # Używamy dynamicznego przesunięcia
-                    water = Liquid(x_pos, y_pos + liquid_offset, tile_size, tile_size - liquid_offset, "woda")
+
+                    # Powierzchnia wody (z obniżeniem)
+
+                    water = Liquid(x_pos, y_pos + 5, tile_size, tile_size - 5, "woda")
+
                     self.liquids.append(water)
+
                     self.game_scene.addItem(water)
 
+
+                elif char == 'w':
+
+                    # Głębia wody (pełny blok, wypełnia lukę)
+
+                    water = Liquid(x_pos, y_pos, tile_size, tile_size, "woda")
+
+                    self.liquids.append(water)
+
+                    self.game_scene.addItem(water)
+
+
                 elif char == 'L':
-                    # Używamy dynamicznego przesunięcia
-                    lawa = Liquid(x_pos, y_pos + liquid_offset, tile_size, tile_size - liquid_offset, "lawa")
+
+                    # Powierzchnia lawy (z obniżeniem)
+
+                    lawa = Liquid(x_pos, y_pos + 5, tile_size, tile_size - 5, "lawa")
+
                     self.liquids.append(lawa)
+
+                    self.game_scene.addItem(lawa)
+
+
+                elif char == 'l':
+
+                    # Głębia lawy (pełny blok)
+
+                    lawa = Liquid(x_pos, y_pos, tile_size, tile_size, "lawa")
+
+                    self.liquids.append(lawa)
+
                     self.game_scene.addItem(lawa)
 
                 elif char == '1':
@@ -140,6 +228,54 @@ class Engine(QGraphicsView):
 
                 elif char == '2':
                     self.start_p2 = (x_pos, y_pos)
+
+                elif char == 'D':
+                    # Drzwi traktujemy jako platformę, żeby blokowały ruch
+                    door = Door(x_pos, y_pos, tile_size, tile_size)
+                    self.platforms.append(door)  # Ważne: dodajemy do platform!
+                    self.doors.append(door)  # Ważne: dodajemy też do listy drzwi
+                    self.game_scene.addItem(door)
+
+                elif char == 'B':
+                    # Przycisk to tylko element wyzwalający, nie blokuje ruchu
+                    btn = Button(x_pos, y_pos, tile_size)
+                    self.buttons.append(btn)
+                    self.game_scene.addItem(btn)
+
+
+                elif char == 'O':
+                    box = Box(x_pos, y_pos, tile_size)
+                    self.platforms.append(box)
+                    self.boxes.append(box)
+                    self.game_scene.addItem(box)
+
+                elif char == 'C':
+                    # Dodajemy tylko do sceny i listy checkpointów, NIE do platform (nie blokuje ruchu)
+                    cp = Checkpoint(x_pos, y_pos, tile_size, tile_size)
+                    self.checkpoints.append(cp)
+                    self.game_scene.addItem(cp)
+        self.current_respawn_p1 = self.start_p1
+        self.current_respawn_p2 = self.start_p2
+
+    def check_checkpoints(self):
+        p1_rect = self.player1.sceneBoundingRect()
+        p2_rect = self.player2.sceneBoundingRect()
+
+        for cp in self.checkpoints:
+            if not cp.is_active:
+                # Wystarczy, że jeden gracz dotknie punktu, aby zapisać postęp dla obu
+                if p1_rect.intersects(cp.sceneBoundingRect()) or p2_rect.intersects(cp.sceneBoundingRect()):
+                    cp.activate()
+                    # Ustawiamy nowe miejsce odrodzenia.
+                    # Gracz 2 jest przesunięty o 20 pikseli w prawo, żeby postacie nie zablokowały się w sobie.
+                    self.current_respawn_p1 = (cp.x(), cp.y())
+                    self.current_respawn_p2 = (cp.x() + 20, cp.y())
+
+    def closeEvent(self, event):
+        # Kiedy zamykamy grę, pokazujemy z powrotem menu główne
+        if self.main_menu:
+            self.main_menu.show()
+        super().closeEvent(event)
 
 class Player(QGraphicsRectItem):
     def __init__(self, x, y, image_path, controls, element):
@@ -170,7 +306,7 @@ class Player(QGraphicsRectItem):
         # Fizyka (przeczytaj notatkę poniżej!)
         self.vx = 0
         self.vy = 0
-        self.gravity = 0.2
+        self.gravity = 0.15
         self.jump_speed = -4.5
         self.move_speed = 2.4
         self.on_ground = False
@@ -218,27 +354,48 @@ class Player(QGraphicsRectItem):
             self.on_ground = True  # Zabezpieczenie, by podłoga ekranu też działała jak grunt
 
     def check_collision(self, platforms, horizontal):
-        p_rect = self.sceneBoundingRect()
+        p_rect = self.sceneBoundingRect().adjusted(0.1, 0.1, -0.1, -0.1)
 
         for platform in platforms:
+            if not platform.isVisible():
+                continue
+
             plat_rect = platform.sceneBoundingRect()
 
             if p_rect.intersects(plat_rect):
                 if horizontal:
-                    # Dodany obustronny bufor tolerancji (5 pikseli).
-                    # Kolizja boczna działa tylko, jeśli postać nie jest w trakcie minimalnego
-                    # styku z podłogą (top platformy) ani z sufitem (bottom platformy).
-                    is_colliding_sideways = (
-                            p_rect.bottom() > plat_rect.top() + 5 and
-                            p_rect.top() < plat_rect.bottom() - 5
-                    )
+                    # --- LOGIKA PCHANIA SKRZYNKI ---
+                    if hasattr(platform, 'is_pushable') and platform.is_pushable:
+                        original_box_x = platform.x()
 
-                    if is_colliding_sideways:
+                        # Próbujemy przesunąć skrzynkę o prędkość gracza
+                        platform.setX(platform.x() + self.vx)
+
+                        # Sprawdzamy, czy przesunięta skrzynka nie wbiła się w inną ścianę
+                        box_collides = False
+                        b_rect = platform.sceneBoundingRect().adjusted(0.1, 0.1, -0.1, -0.1)
+                        for other_plat in platforms:
+                            if other_plat is not platform and other_plat.isVisible():
+                                if b_rect.intersects(other_plat.sceneBoundingRect()):
+                                    box_collides = True
+                                    break
+
+                        # Jeśli skrzynka w coś uderzyła, cofamy ją i blokujemy gracza
+                        if box_collides:
+                            platform.setX(original_box_x)
+                            if self.vx > 0:
+                                self.setX(plat_rect.left() - self.rect().width())
+                            elif self.vx < 0:
+                                self.setX(plat_rect.right())
+
+                    # --- ZWYKŁA ŚCIANA ---
+                    else:
                         if self.vx > 0:
                             self.setX(plat_rect.left() - self.rect().width())
                         elif self.vx < 0:
                             self.setX(plat_rect.right())
                 else:
+                    # ... (tutaj zostawiasz stary kod od self.vy > 0 i self.vy < 0)
                     if self.vy > 0:
                         self.setY(plat_rect.top() - self.rect().height())
                         self.vy = 0
@@ -246,7 +403,6 @@ class Player(QGraphicsRectItem):
                     elif self.vy < 0:
                         self.setY(plat_rect.bottom())
                         self.vy = 0
-
 
 class Liquid(QGraphicsRectItem):
     def __init__(self, x, y, width, height, liquid_type):
@@ -268,8 +424,79 @@ class Liquid(QGraphicsRectItem):
             # Niebieski
             self.setBrush(QBrush(QColor(30, 144, 255, 150)))
 
-if __name__ == "__main__":
+class Door(QGraphicsRectItem):
+    def __init__(self, x, y, width, height):
+        super().__init__(0, 0, width, height)
+        self.setPos(x, y)
+        self.setBrush(QColor("purple")) # Wyróżniający się kolor
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.is_open = False
+
+    def open_door(self):
+        if not self.is_open:
+            self.hide() # Ukrywamy wizualnie
+            self.is_open = True
+
+    def close_door(self):
+        if self.is_open:
+            self.show() # Pokazujemy z powrotem
+            self.is_open = False
+
+class Button(QGraphicsRectItem):
+    def __init__(self, x, y, width):
+        # Przycisk ma tylko 5 pikseli wysokości
+        super().__init__(0, 0, width, 5)
+        # Przesuwamy go na dół kafelka (20 - 5 = 15)
+        self.setPos(x, y + 15)
+        self.setBrush(QColor("yellow"))
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+
+class Box(QGraphicsRectItem):
+    def __init__(self, x, y, size):
+        super().__init__(0, 0, size, size)
+        self.setPos(x, y)
+        self.setBrush(QColor("saddlebrown"))  # Kolor brązowy
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+
+        # Flaga informująca gracza, że ten obiekt można pchać
+        self.is_pushable = True
+
+        self.vy = 0
+        self.gravity = 0.8
+
+    def update_physics(self, platforms):
+        self.vy += self.gravity
+        self.setY(self.y() + self.vy)
+
+        # Sprawdzanie kolizji z podłogą dla skrzynki
+        b_rect = self.sceneBoundingRect().adjusted(0.1, 0.1, -0.1, -0.1)
+        for platform in platforms:
+            # Ignorujemy samą siebie i ukryte obiekty (np. otwarte drzwi)
+            if platform is self or not platform.isVisible():
+                continue
+
+            if b_rect.intersects(platform.sceneBoundingRect()):
+                if self.vy > 0:  # Skrzynka spada na podłogę
+                    self.setY(platform.sceneBoundingRect().top() - self.rect().height())
+                    self.vy = 0
+
+class Checkpoint(QGraphicsRectItem):
+    def __init__(self, x, y, width, height):
+        super().__init__(0, 0, width, height)
+        self.setPos(x, y)
+        # Ciemnoczerwony przed aktywacją
+        self.setBrush(QColor("darkred"))
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.is_active = False
+
+    def activate(self):
+        if not self.is_active:
+            self.is_active = True
+            # Zmienia kolor na zielony po aktywacji, dając graczowi wizualny feedback
+            self.setBrush(QColor("darkgreen"))
+
+if __name__ == '__main__':
     app = QApplication(sys.argv)
-    engine = Engine()
-    engine.show()
+    game = Engine()
+    game.show()
     sys.exit(app.exec())
