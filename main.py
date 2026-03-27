@@ -65,6 +65,7 @@ class Engine(QGraphicsView):
         self.check_liquid_collisions()
         self.process_events()  # <--- TO OŻYWI DRZWI
         self.check_checkpoints()
+        self.check_level_completion()
 
     def process_events(self):
         any_button_pressed = False
@@ -146,6 +147,7 @@ class Engine(QGraphicsView):
         self.buttons = []
         self.boxes = []
         self.checkpoints = []
+        self.exits = []
 
         try:
             with open(filepath, 'r') as file:
@@ -254,6 +256,15 @@ class Engine(QGraphicsView):
                     cp = Checkpoint(x_pos, y_pos, tile_size, tile_size)
                     self.checkpoints.append(cp)
                     self.game_scene.addItem(cp)
+
+                elif char == 'F':
+                    portal = ExitPortal(x_pos, y_pos, tile_size, tile_size, "ogień")
+                    self.exits.append(portal)
+                    self.game_scene.addItem(portal)
+                elif char == 'S':
+                    portal = ExitPortal(x_pos, y_pos, tile_size, tile_size, "woda")
+                    self.exits.append(portal)
+                    self.game_scene.addItem(portal)
         self.current_respawn_p1 = self.start_p1
         self.current_respawn_p2 = self.start_p2
 
@@ -270,6 +281,40 @@ class Engine(QGraphicsView):
                     # Gracz 2 jest przesunięty o 20 pikseli w prawo, żeby postacie nie zablokowały się w sobie.
                     self.current_respawn_p1 = (cp.x(), cp.y())
                     self.current_respawn_p2 = (cp.x() + 20, cp.y())
+
+    def check_level_completion(self):
+        p1_rect = self.player1.sceneBoundingRect()
+        p2_rect = self.player2.sceneBoundingRect()
+
+        p1_at_exit = False
+        p2_at_exit = False
+
+        for portal in self.exits:
+            portal_rect = portal.sceneBoundingRect()
+
+            if portal.element == "ogień" and p1_rect.intersects(portal_rect):
+                p1_at_exit = True
+
+            elif portal.element == "woda" and p2_rect.intersects(portal_rect):
+                p2_at_exit = True
+
+        if p1_at_exit and p2_at_exit:
+            self.level_complete()
+
+    def level_complete(self):
+        self.timer.stop()
+
+        from PyQt6.QtWidgets import QGraphicsTextItem
+        from PyQt6.QtGui import QFont
+
+        win_text = QGraphicsTextItem("POZIOM UKOŃCZONY!")
+        win_text.setFont(QFont("Arial", 40, QFont.Weight.Bold))
+        win_text.setDefaultTextColor(QColor("white"))
+
+        text_rect = win_text.boundingRect()
+        win_text.setPos((800 - text_rect.width()) / 2, (600 - text_rect.height()) / 2)
+
+        self.game_scene.addItem(win_text)
 
     def closeEvent(self, event):
         # Kiedy zamykamy grę, pokazujemy z powrotem menu główne
@@ -494,6 +539,21 @@ class Checkpoint(QGraphicsRectItem):
             self.is_active = True
             # Zmienia kolor na zielony po aktywacji, dając graczowi wizualny feedback
             self.setBrush(QColor("darkgreen"))
+
+class ExitPortal(QGraphicsRectItem):
+    def __init__(self, x, y, width, height, element):
+        super().__init__()
+        self.setRect(0, 0, width, height)
+        self.setPos(x, y)
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+
+        self.element = element
+
+        # Wizualizacja wyjścia (możesz podpiąć QPixmap jak przy graczach)
+        if element == "ogień":
+            self.setBrush(QBrush(QColor(139, 0, 0)))  # Ciemnoczerwony
+        elif element == "woda":
+            self.setBrush(QBrush(QColor(0, 0, 139)))  # Ciemnoniebieski
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
