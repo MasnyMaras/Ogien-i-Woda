@@ -1,12 +1,12 @@
 import sys
+import json
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
                              QLabel, QFileDialog, QSpacerItem, QSizePolicy)
 from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtCore import Qt
-
-# Importujemy oba moduły!
 from main import Engine
 from editor import LevelEditor
+
 
 class MainMenu(QWidget):
     def __init__(self):
@@ -18,29 +18,28 @@ class MainMenu(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Tytuł
+        # title
         title = QLabel("OGIEŃ I WODA")
         title.setFont(QFont("Consolas", 32, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("color: #ffaa00; margin-bottom: 30px;")
         layout.addWidget(title)
 
-        # Przycisk 1: Graj (domyślny poziom)
+        # button 1 play
         self.btn_play = self.create_button("Graj")
-        self.btn_play.clicked.connect(lambda: self.launch_game("level1.txt"))
+        self.btn_play.clicked.connect(self.play_default_level)
         layout.addWidget(self.btn_play)
 
-        # Przycisk 2: Wczytaj (własny poziom)
+        # button 2 load
         self.btn_load = self.create_button("Wczytaj")
         self.btn_load.clicked.connect(self.load_custom_level)
         layout.addWidget(self.btn_load)
 
-        # Przycisk 3: Edytor
+        # button 3 editor
         self.btn_editor = self.create_button("Wejdź do edytora")
         self.btn_editor.clicked.connect(self.launch_editor)
         layout.addWidget(self.btn_editor)
 
-        # Wypełniacz dołu
         layout.addItem(QSpacerItem(20, 20, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
 
     def create_button(self, text):
@@ -62,30 +61,48 @@ class MainMenu(QWidget):
         """)
         return btn
 
+    def update_config_and_launch(self, map_path):
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+            config["plik_mapy"] = map_path
+
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4)
+
+            self.launch_game()
+        except Exception as e:
+            print(f"Błąd podczas aktualizacji config.json: {e}")
+            self.launch_game()
+
+    def play_default_level(self):
+        # Domyślna mapa dla przycisku Graj
+        self.update_config_and_launch("mapa.txt")
+
     def load_custom_level(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Wybierz plik z mapą", "", "Pliki tekstowe (*.txt);;Wszystkie pliki (*)"
         )
         if file_path:
-            self.launch_game(file_path)
+            self.update_config_and_launch(file_path)
 
-    def launch_game(self, level_file):
+    def launch_game(self):
         try:
-            # Przekazujemy self (czyli to menu) do silnika gry
-            self.game_window = Engine(level_file, main_menu=self)
+            self.game_window = Engine(main_menu=self)
             self.game_window.show()
-            self.hide() # Ukrywamy menu
+            self.hide()
         except Exception as e:
-            print(f"Błąd podczas ładowania poziomu: {e}")
+            print(f"error while loading: {e}")
 
     def launch_editor(self):
         try:
-            # Przekazujemy self do edytora
             self.editor_window = LevelEditor(main_menu=self)
             self.editor_window.show()
-            self.hide() # Ukrywamy menu
+            self.hide()
         except Exception as e:
-            print(f"Błąd podczas ładowania edytora: {e}")
+            print(f"error while loading {e}")
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

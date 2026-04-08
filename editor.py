@@ -5,7 +5,7 @@ from PyQt6.QtGui import QColor, QPen, QBrush, QFont
 from PyQt6.QtCore import Qt
 
 
-# Pomocnicza klasa płótna - przekazuje kliknięcia myszką do głównego okna
+# additional canvas
 class MapCanvas(QGraphicsView):
     def __init__(self, parent_editor):
         super().__init__()
@@ -18,7 +18,6 @@ class MapCanvas(QGraphicsView):
         self.editor.handle_mouse(event, self)
 
     def keyPressEvent(self, event):
-        # Przekazujemy wciśnięcia klawiszy do głównego okna
         self.editor.keyPressEvent(event)
 
 
@@ -32,10 +31,9 @@ class LevelEditor(QWidget):
         self.rows = 30
         self.tile_size = 20
 
-        # --- GŁÓWNY UKŁAD (Lewa: Płótno, Prawa: Instrukcja) ---
         main_layout = QHBoxLayout(self)
 
-        # 1. Płótno (Canvas)
+        # Canvas
         self.scene = QGraphicsScene(0, 0, 800, 600)
         self.scene.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
 
@@ -46,17 +44,16 @@ class LevelEditor(QWidget):
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         main_layout.addWidget(self.view)
 
-        # 2. Panel Instrukcji
+        # instruction
         self.info_panel = QTextEdit()
         self.info_panel.setReadOnly(True)
         self.info_panel.setFixedWidth(280)
         self.info_panel.setFont(QFont("Consolas", 10))
-        # Ciemny motyw dla panelu bocznego
         self.info_panel.setStyleSheet("background-color: #2b2b2b; color: #ffffff; padding: 10px;")
 
         main_layout.addWidget(self.info_panel)
 
-        # --- DANE EDYTORA ---
+        # data
         self.map_data = [['.' for _ in range(self.cols)] for _ in range(self.rows)]
         self.rects = [[None for _ in range(self.cols)] for _ in range(self.rows)]
         self.current_brush = 'X'
@@ -73,22 +70,25 @@ class LevelEditor(QWidget):
             'C': QColor("darkgreen"),
             'O': QColor("saddlebrown"),
             '1': QColor("white"),
-            '2': QColor("white")
+            '2': QColor("white"),
+            '3': QColor("darkred"),
+            '4': QColor("darkblue")
         }
 
         self.draw_grid()
-        self.update_instructions()  # Inicjalizacja tekstu instrukcji
+        self.update_instructions()
 
     def update_instructions(self):
-        # Ta funkcja odświeża tekst, żeby pokazywać aktualnie wybrany pędzel
+        # refresh
         tekst = f"""=== EDYTOR POZIOMÓW ===
-    
+
 Aktywny pędzel: [ {self.current_brush} ]
 
 --- STEROWANIE ---
 LPM : Rysuj blok
 PPM : Gumka (Usuń)
 S   : Zapisz do pliku
+R   : Wczytaj z pliku
 
 --- WYBÓR BLOKÓW ---
 X : Gruba ściana
@@ -97,12 +97,14 @@ W : Woda (Powierzchnia)
 E : Woda (Głębia)
 L : Lawa (Powierzchnia)
 K : Lawa (Głębia)
-B : Przycisk (Żółty)
-D : Drzwi (Fioletowe)
-C : Checkpoint (Zielony)
+B : Przycisk 
+D : Drzwi mechaniczne 
+C : Checkpoint
 O : Skrzynka fizyczna
-1 : Start Ogień (P1)
-2 : Start Woda (P2)
+1 : Start Ogień
+2 : Start Woda
+3 : Wyjście Ogień
+4 : Wyjście Woda
 """
         self.info_panel.setText(tekst)
 
@@ -168,12 +170,16 @@ O : Skrzynka fizyczna
             self.current_brush = '1'
         elif key == Qt.Key.Key_2:
             self.current_brush = '2'
+        elif key == Qt.Key.Key_3:
+            self.current_brush = '3'
+        elif key == Qt.Key.Key_4:
+            self.current_brush = '4'
 
         elif key == Qt.Key.Key_S:
             self.save_map()
+        elif key == Qt.Key.Key_R:
+            self.load_map()
 
-        # Po każdym kliknięciu klawisza odświeżamy panel,
-        # żeby pokazać użytkownikowi zmianę pędzla
         self.update_instructions()
 
     def save_map(self):
@@ -193,10 +199,45 @@ O : Skrzynka fizyczna
         else:
             print("Zapisywanie anulowane.")
 
+    def load_map(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Wczytaj poziom",
+            "",
+            "Pliki tekstowe (*.txt);;Wszystkie pliki (*)"
+        )
+        if file_path:
+            try:
+                with open(file_path, "r") as file:
+                    lines = file.readlines()
+
+                for row in range(self.rows):
+                    for col in range(self.cols):
+                        self.place_tile(row, col, '.')
+
+                for row_idx, line in enumerate(lines):
+                    if row_idx >= self.rows:
+                        break
+                    line = line.strip('\n')
+                    for col_idx, char in enumerate(line):
+                        if col_idx >= self.cols:
+                            break
+
+
+                        if char in self.colors:
+                            self.place_tile(row_idx, col_idx, char)
+
+                print(f"Pomyślnie wczytano mapę z: {file_path}")
+            except Exception as e:
+                print(f"Wystąpił błąd podczas wczytywania: {e}")
+        else:
+            print("Wczytywanie anulowane.")
+
     def closeEvent(self, event):
         if self.main_menu:
             self.main_menu.show()
         super().closeEvent(event)
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
