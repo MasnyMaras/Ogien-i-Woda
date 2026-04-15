@@ -72,7 +72,8 @@ class LevelEditor(QWidget):
             '1': QColor("white"),
             '2': QColor("white"),
             '3': QColor("darkred"),
-            '4': QColor("darkblue")
+            '4': QColor("darkblue"),
+            'A': QColor("magenta")
         }
 
         self.draw_grid()
@@ -105,6 +106,7 @@ O : Skrzynka fizyczna
 2 : Start Woda
 3 : Wyjście Ogień
 4 : Wyjście Woda
+A : Przeciwinik AI
 """
         self.info_panel.setText(tekst)
 
@@ -174,6 +176,8 @@ O : Skrzynka fizyczna
             self.current_brush = '3'
         elif key == Qt.Key.Key_4:
             self.current_brush = '4'
+        elif key == Qt.Key.Key_A:
+            self.current_brush = 'A'
 
         elif key == Qt.Key.Key_S:
             self.save_map()
