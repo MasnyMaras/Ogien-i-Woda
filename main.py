@@ -6,8 +6,7 @@ from PyQt6.QtWidgets import QGraphicsRectItem
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPixmap, QPen, QBrush
 from PyQt6.QtWidgets import QGraphicsPixmapItem
-import socket
-import threading
+import math
 
 
 class Engine(QGraphicsView):
@@ -42,6 +41,11 @@ class Engine(QGraphicsView):
         self.current_respawn_p2 = self.start_p2
         self.checkpoints = []
 
+        #AI wrogie
+        self.enemies = []
+        self.players_moved = False
+        self.movement_timer = 0
+
         map_file = self.config.get("plik_mapy", "level1.txt")
         self.load_level(map_file)
 
@@ -62,21 +66,6 @@ class Engine(QGraphicsView):
         self.timer.start(16)
         self.keys = {}
 
-        multi_config = self.config.get("multiplayer", {})
-        self.rola = multi_config.get("moja_rola", "ogień")
-        self.net_ip = multi_config.get("ip", "127.0.0.1")
-        self.net_port = multi_config.get("port", 5555)
-
-        self.remote_state = None
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            self.socket.connect((self.net_ip, self.net_port))
-            print(f"Połączono z serwerem! Twoja rola: {self.rola}")
-            # Uruchamiamy nasłuchiwanie w tle, aby nie ciąć FPS-ów
-            threading.Thread(target=self.receive_data, daemon=True).start()
-        except Exception as e:
-            print(f"Brak serwera TCP ({e}). Gramy offline (sterowanie lokalne).")
-            self.socket = None
 
     def load_config(self):
         try:
@@ -92,88 +81,30 @@ class Engine(QGraphicsView):
                 "grawitacja_skrzyni": 0.8
             }
 
-    def receive_data(self):
-        """Wątek nasłuchujący odbierający stan drugiego gracza z serwera."""
-        while True:
-            try:
-                data = self.socket.recv(1024).decode('utf-8')
-                if data:
-                    # Strumień TCP może skleić kilka JSONów, dzielimy je znakiem nowej linii
-                    messages = data.strip().split('\n')
-                    for msg in messages:
-                        if msg:
-                            self.remote_state = json.loads(msg)
-            except:
-                print("Rozłączono z serwerem.")
-                break
-
-    def player_is_pushing(self, box_index):
-        if not self.socket:
-            return True
-
-        my_player = self.player1 if self.rola == "ogień" else self.player2
-        p_rect = my_player.sceneBoundingRect().adjusted(-1, -1, 1, 1)
-        b_rect = self.boxes[box_index].sceneBoundingRect()
-        return p_rect.intersects(b_rect)
-
     def game_loop(self):
-        if self.socket:
-            if self.rola == "ogień":
-                self.player1.update_physics(self.keys, self.platforms)
-            elif self.rola == "woda":
-                self.player2.update_physics(self.keys, self.platforms)
-        else:
-            self.player1.update_physics(self.keys, self.platforms)
-            self.player2.update_physics(self.keys, self.platforms)
+        self.player1.update_physics(self.keys, self.platforms)
+        self.player2.update_physics(self.keys, self.platforms)
 
         for box in self.boxes:
             box.update_physics(self.platforms)
+
+        #logika AI
+        if self.players_moved:
+            self.movement_timer += 1
+        is_ai_active = self.movement_timer >= 60
+
+        for enemy in self.enemies:
+            enemy.update_ai(self.player1, self.player2, self.platforms, is_ai_active)
+
+            #śmierć gracza przy kontakcie z wrogiem
+            if enemy.sceneBoundingRect().intersects(self.player1.sceneBoundingRect()) or enemy.sceneBoundingRect().intersects(self.player2.sceneBoundingRect()):
+                self.reset_level()
+                break
 
         self.check_liquid_collisions()
         self.process_events()
         self.check_checkpoints()
         self.check_level_completion()
-
-        if self.socket:
-            my_player = self.player1 if self.rola == "ogień" else self.player2
-
-            boxes_data = []
-            for i, box in enumerate(self.boxes):
-                boxes_data.append({
-                    "id": i,
-                    "x": box.x(),
-                    "y": box.y()
-                })
-
-            state_msg = {
-                "rola": self.rola,
-                "x": my_player.x(),
-                "y": my_player.y(),
-                "boxes": boxes_data
-            }
-            try:
-                json_data = json.dumps(state_msg) + '\n'
-                self.socket.sendall(json_data.encode('utf-8'))
-            except Exception as e:
-                pass
-
-        if self.remote_state:
-            remote_rola = self.remote_state.get("rola")
-            remote_x = self.remote_state.get("x")
-            remote_y = self.remote_state.get("y")
-
-            if remote_rola == "woda" and self.rola == "ogień":
-                self.player2.setPos(remote_x, remote_y)
-            elif remote_rola == "ogień" and self.rola == "woda":
-                self.player1.setPos(remote_x, remote_y)
-
-            remote_boxes = self.remote_state.get("boxes", [])
-            for b_data in remote_boxes:
-                idx = b_data.get("id")
-                if idx is not None and idx < len(self.boxes):
-                    if not self.player_is_pushing(idx):
-                        self.boxes[idx].setPos(b_data["x"], b_data["y"])
-                        self.boxes[idx].vy = 0
 
     def process_events(self):
         any_button_pressed = False
@@ -208,6 +139,11 @@ class Engine(QGraphicsView):
             self.close()
         elif event.key() == Qt.Key.Key_R:
             self.hot_reload()
+        self.keys[event.key()] = True
+        #Detekcja początku ruchu
+        if event.key() in [Qt.Key.Key_W, Qt.Key.Key_A, Qt.Key.Key_D, Qt.Key.Key_Up, Qt.Key.Key_Left, Qt.Key.Key_Right]:
+            self.players_moved = True
+
         self.keys[event.key()] = True
 
     def hot_reload(self):
@@ -280,6 +216,11 @@ class Engine(QGraphicsView):
         self.player2.setPos(self.current_respawn_p2[0], self.current_respawn_p2[1])
         self.player2.vx = 0
         self.player2.vy = 0
+
+        self.players_moved = False
+        self.movement_timer = 0
+        for enemy in self.enemies:
+            enemy.reset_pos()
 
     def load_level(self, filepath):
         tile_size = 20
@@ -383,6 +324,11 @@ class Engine(QGraphicsView):
                     portal = ExitPortal(x_pos, y_pos, tile_size, tile_size, "woda")
                     self.exits.append(portal)
                     self.game_scene.addItem(portal)
+                elif char == 'A':
+                    enemy = EnemyAI(x_pos, y_pos, self.config)
+                    self.enemies.append(enemy)
+                    self.game_scene.addItem(enemy)
+
         self.current_respawn_p1 = self.start_p1
         self.current_respawn_p2 = self.start_p2
 
@@ -652,6 +598,113 @@ class ExitPortal(QGraphicsRectItem):
         elif element == "woda":
             self.setBrush(QBrush(QColor(0, 0, 139)))
 
+
+class EnemyAI(QGraphicsRectItem):
+    def __init__(self, x, y, config):
+        super().__init__(0, 0, 15, 25)
+        self.start_x = x
+        self.start_y = y
+        self.setPos(x, y)
+        self.setBrush(QColor("magenta"))
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+
+        self.vx = 0
+        self.vy = 0
+        self.speed = 1.5
+        self.gravity = config.get("grawitacja_gracza", 0.16)
+        self.state = "IDLE"
+
+    def reset_pos(self):
+        self.setPos(self.start_x, self.start_y)
+        self.vx = 0
+        self.vy = 0
+        self.state = "IDLE"
+
+    def update_ai(self, p1, p2, platforms, is_active):
+        self.vy += self.gravity
+
+        if is_active:
+            dist_fire = math.hypot(self.x() - p1.x(), self.y() - p1.y())
+            dist_water = math.hypot(self.x() - p2.x(), self.y() - p2.y())
+
+            # Mechanizm decyzyjny (Drabina priorytetów)
+            if dist_water < 180:
+                # Najwyzszy priorytet: Ucieczka przed woda
+                self.state = "FLEE"
+                if p2.x() < self.x():
+                    self.vx = self.speed  # Uciekaj w prawo
+                else:
+                    self.vx = -self.speed  # Uciekaj w lewo
+            elif dist_fire < 250:
+                # Nizszy priorytet: Gonienie ognia
+                self.state = "CHASE"
+                if p1.x() < self.x():
+                    self.vx = -self.speed  # Gon w lewo
+                else:
+                    self.vx = self.speed  # Gon w prawo
+            else:
+                self.state = "PATROL"
+                # Jesli nikogo nie ma, idzie przed siebie
+                if self.vx == 0:
+                    self.vx = self.speed
+
+        else:
+            # Agent spi (dziala tylko grawitacja)
+            self.vx = 0
+
+        self.apply_movement(platforms)
+
+    def apply_movement(self, platforms):
+        # Oś X
+        self.setX(self.x() + self.vx)
+        self.check_collision(platforms, horizontal=True)
+
+        # Blokada granic ekranu (Oś X)
+        if self.x() < 0:
+            self.setX(0)
+            self.vx *= -1  # Odbicie od lewej krawędzi
+        elif self.x() > 800 - self.rect().width():
+            self.setX(800 - self.rect().width())
+            self.vx *= -1  # Odbicie od prawej krawędzi
+
+        # Oś Y
+        self.setY(self.y() + self.vy)
+        self.check_collision(platforms, horizontal=False)
+
+        # Blokada granic ekranu (Oś Y - podłoga i sufit)
+        if self.y() < 0:
+            self.setY(0)
+            self.vy = 0
+        elif self.y() > 600 - self.rect().height():
+            self.setY(600 - self.rect().height())
+            self.vy = 0
+            # Można tu zresetować stan skoku, jeśli dodasz go w przyszłości
+
+    def check_collision(self, platforms, horizontal):
+        p_rect = self.sceneBoundingRect().adjusted(0.1, 0.1, -0.1, -0.1)
+
+        for platform in platforms:
+            if not platform.isVisible():
+                continue
+
+            if p_rect.intersects(platform.sceneBoundingRect()):
+                if horizontal:
+                    if self.vx > 0:
+                        self.setX(platform.sceneBoundingRect().left() - self.rect().width())
+                    elif self.vx < 0:
+                        self.setX(platform.sceneBoundingRect().right())
+
+                    self.vx *= -1
+
+                    break
+                else:
+                    if self.vy > 0:
+                        self.setY(platform.sceneBoundingRect().top() - self.rect().height())
+                        self.vy = 0
+                    elif self.vy < 0:
+                        self.setY(platform.sceneBoundingRect().bottom())
+                        self.vy = 0
+                    break
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
